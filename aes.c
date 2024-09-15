@@ -38,8 +38,8 @@ static uint8_t gf2_mul(uint8_t a, uint8_t b) {
 #endif // !AES_MIXCOLOMNS_MUL_TABLES
 
 static void add_round_key(aes_state_t* state, const aes_state_t* round_key) {
-    for(size_t i = 0; i < aes_nb; i++) {
-        state->colomn[i].word ^= round_key->colomn[i].word;
+    for(size_t i = 0; i < aes_word_size; i++) {
+        state->row[i].word ^= round_key->row[i].word;
     }
 }
 
@@ -50,36 +50,22 @@ static void sub_bytes(aes_state_t* state) {
 }
 
 static void shift_rows(aes_state_t* state) {
-    // shift row 1
-    uint8_t temp = state->matrix[0][1];
-    state->matrix[0][1] = state->matrix[1][1];
-    state->matrix[1][1] = state->matrix[2][1];
-    state->matrix[2][1] = state->matrix[3][1];
-    state->matrix[3][1] = temp;
-
-    // shift row 2
-    temp = state->matrix[0][2];
-    state->matrix[0][2] = state->matrix[2][2];
-    state->matrix[2][2] = temp;
-    temp = state->matrix[1][2];
-    state->matrix[1][2] = state->matrix[3][2];
-    state->matrix[3][2] = temp;
-
-    //shift row 3
-    temp = state->matrix[0][3];
-    state->matrix[0][3] = state->matrix[3][3];
-    state->matrix[3][3] = state->matrix[2][3];
-    state->matrix[2][3] = state->matrix[1][3];
-    state->matrix[1][3] = temp;
+    for(size_t i = 1; i < aes_word_size; i++) {
+        state->row[i].word = state->row[i].word << (word_bit_size - byte_bit_size * i) | state->row[i].word >> byte_bit_size * i;
+    }
 }
 
 #ifdef AES_LOOKUP_TABLES
 static void ssm_table(aes_state_t* state) {
     aes_state_t new_state = {0};
     for(size_t i = 0; i < aes_nb; i++) {
+        word_byte temp = {.word = 0};
         for(size_t j = 0; j < aes_word_size; j++) {
-            uint32_t temp = aes_ssm_table[state->matrix[(i + j) % aes_nb][j]];
-            new_state.colomn[i].word ^= ((temp << byte_bit_size *j) | (temp >> (word_bit_size - byte_bit_size * j)));
+            uint32_t inv_ssm_word = aes_ssm_table[state->matrix[j][(i + j) % aes_nb]];
+            temp.word ^= ((inv_ssm_word << byte_bit_size *j) | (inv_ssm_word >> (word_bit_size - byte_bit_size * j)));
+        }
+        for(size_t j = 0; j < aes_word_size; j++) {
+                new_state.matrix[j][i] ^= temp.byte[j];
         }
     }
     *state = new_state;
@@ -87,23 +73,25 @@ static void ssm_table(aes_state_t* state) {
 #else // !AES_LOOKUP_TABLES
 static void mix_colomns(aes_state_t* state) {
     for(size_t i = 0; i < aes_nb; i++) {
-        aes_colomn_t colomn = state->colomn[i];
-        state->colomn[i].word = 0;
+        word_byte colomn = {.word = 0};
         for(size_t j = 0; j < aes_word_size; j++) {
     #ifdef AES_MIXCOLOMNS_MUL_TABLES
-            uint8_t temp = colomn.byte[j];
-            state->colomn[i].byte[(j + 0) % aes_word_size] ^= aes_mulx2[temp];
-            state->colomn[i].byte[(j + 1) % aes_word_size] ^= temp;
-            state->colomn[i].byte[(j + 2) % aes_word_size] ^= temp;
-            state->colomn[i].byte[(j + 3) % aes_word_size] ^= aes_mulx3[temp];
+            uint8_t temp = state->matrix[j][i];
+            colomn.byte[(j + 0) % aes_word_size] ^= aes_mulx2[temp];
+            colomn.byte[(j + 1) % aes_word_size] ^= temp;
+            colomn.byte[(j + 2) % aes_word_size] ^= temp;
+            colomn.byte[(j + 3) % aes_word_size] ^= aes_mulx3[temp];
     #else // !AES_MIXCOLOMNS_MUL_TABLES
-            uint8_t zero_xtime = colomn.byte[j];
+            uint8_t zero_xtime = state->matrix[j][i];
             uint8_t one_xtime = xtime(zero_xtime);
-            state->colomn[i].byte[(j + 0) % aes_word_size] ^= one_xtime;
-            state->colomn[i].byte[(j + 1) % aes_word_size] ^= zero_xtime;
-            state->colomn[i].byte[(j + 2) % aes_word_size] ^= zero_xtime;
-            state->colomn[i].byte[(j + 3) % aes_word_size] ^= one_xtime ^ zero_xtime;
+            colomn.byte[(j + 0) % aes_word_size] ^= one_xtime;
+            colomn.byte[(j + 1) % aes_word_size] ^= zero_xtime;
+            colomn.byte[(j + 2) % aes_word_size] ^= zero_xtime;
+            colomn.byte[(j + 3) % aes_word_size] ^= one_xtime ^ zero_xtime;
     #endif // !AES_MIXCOLOMNS_MUL_TABLES
+        }
+        for(size_t j = 0; j < aes_word_size; j++) {
+            state->matrix[j][i] = colomn.byte[j];
         }
     }
 }
@@ -116,36 +104,22 @@ static void inv_sub_bytes(aes_state_t* state) {
 }
 
 static void inv_shift_rows(aes_state_t* state) {
-    // shift row 1
-    uint8_t temp = state->matrix[0][1];
-    state->matrix[0][1] = state->matrix[3][1];
-    state->matrix[3][1] = state->matrix[2][1];
-    state->matrix[2][1] = state->matrix[1][1];
-    state->matrix[1][1] = temp;
-
-    // shift row 2
-    temp = state->matrix[0][2];
-    state->matrix[0][2] = state->matrix[2][2];
-    state->matrix[2][2] = temp;
-    temp = state->matrix[1][2];
-    state->matrix[1][2] = state->matrix[3][2];
-    state->matrix[3][2] = temp;
-
-    // shift row 3
-    temp = state->matrix[0][3];
-    state->matrix[0][3] = state->matrix[1][3];
-    state->matrix[1][3] = state->matrix[2][3];
-    state->matrix[2][3] = state->matrix[3][3];
-    state->matrix[3][3] = temp;
+    for(size_t i = 1; i < aes_word_size; i++) {
+        state->row[i].word = state->row[i].word >> (word_bit_size - byte_bit_size * i) | state->row[i].word << byte_bit_size * i;
+    }
 }
 
 #ifdef AES_LOOKUP_TABLES
 static void inv_ssm_table(aes_state_t* state) {
     aes_state_t new_state = {0};
     for(size_t i = 0; i < aes_nb; i++) {
+        word_byte temp = {.word = 0};
         for(size_t j = 0; j < aes_word_size; j++) {
-            uint32_t temp = aes_inv_ssm_table[state->matrix[(i - j) % aes_nb][j]];
-            new_state.colomn[i].word ^= ((temp << byte_bit_size *j) | (temp >> (word_bit_size - byte_bit_size * j)));
+            uint32_t ssm_word = aes_inv_ssm_table[state->matrix[j][(i - j) % aes_nb]];
+            temp.word ^= (ssm_word << byte_bit_size *j) | (ssm_word >> (word_bit_size - byte_bit_size * j));
+        }
+        for(size_t j = 0; j < aes_word_size; j++) {
+                new_state.matrix[j][i] ^= temp.byte[j];
         }
     }
     *state = new_state;
@@ -154,39 +128,46 @@ static void inv_ssm_table(aes_state_t* state) {
 
 static void inv_mix_colomns(aes_state_t* state) {
     for(size_t i = 0; i < aes_nb; i++) {
-        aes_colomn_t colomn = state->colomn[i];
-        state->colomn[i].word = 0;
+        word_byte colomn = {.word = 0};
         for(size_t j = 0; j < aes_word_size; j++) {
 #ifdef AES_MIXCOLOMNS_MUL_TABLES
-            uint8_t temp = colomn.byte[j];
-            state->colomn[i].byte[(j + 0) % aes_word_size] ^= aes_mulxe[temp];
-            state->colomn[i].byte[(j + 1) % aes_word_size] ^= aes_mulx9[temp];
-            state->colomn[i].byte[(j + 2) % aes_word_size] ^= aes_mulxd[temp];
-            state->colomn[i].byte[(j + 3) % aes_word_size] ^= aes_mulxb[temp];
+            uint8_t temp = state->matrix[j][i];
+            colomn.byte[(j + 0) % aes_word_size] ^= aes_mulxe[temp];
+            colomn.byte[(j + 1) % aes_word_size] ^= aes_mulx9[temp];
+            colomn.byte[(j + 2) % aes_word_size] ^= aes_mulxd[temp];
+            colomn.byte[(j + 3) % aes_word_size] ^= aes_mulxb[temp];
 #else // !AES_MIXCOLOMNS_MUL_TABLES
-            aes_colomn_t xtimes = {.byte[0] = colomn.byte[j]};
+            word_byte xtimes;
+            xtimes.byte[0] = state->matrix[j][i];
             for(size_t k = 1; k < aes_word_size; k++) {
                 xtimes.byte[k] = xtime(xtimes.byte[k - 1]);
             }
             uint8_t xnine = xtimes.byte[0] ^ xtimes.byte[3];
-            state->colomn[i].byte[(j + 0) % aes_word_size] ^= xtimes.byte[1] ^ xtimes.byte[2] ^ xtimes.byte[3];
-            state->colomn[i].byte[(j + 1) % aes_word_size] ^= xnine;
-            state->colomn[i].byte[(j + 2) % aes_word_size] ^= xnine ^ xtimes.byte[2];
-            state->colomn[i].byte[(j + 3) % aes_word_size] ^= xnine ^ xtimes.byte[1];
+            colomn.byte[(j + 0) % aes_word_size] ^= xtimes.byte[1] ^ xtimes.byte[2] ^ xtimes.byte[3];
+            colomn.byte[(j + 1) % aes_word_size] ^= xnine;
+            colomn.byte[(j + 2) % aes_word_size] ^= xnine ^ xtimes.byte[2];
+            colomn.byte[(j + 3) % aes_word_size] ^= xnine ^ xtimes.byte[1];
 #endif // !AES_MIXCOLOMNS_MUL_TABLES
+        }
+        for(size_t j = 0; j < aes_word_size; j++) {
+            state->matrix[j][i] = colomn.byte[j];
         }
     }
 }
 
 static void load(aes_state_t* state, const uint8_t* in) {
-    for(size_t i = 0; i < aes_block_size; i++) {
-        state->byte[i] = in[i];
+    for(size_t i = 0; i < aes_nb; i++) {
+        for(size_t j = 0; j < aes_word_size; j++) {
+            state->matrix[j][i] = in[i * aes_word_size + j];
+        }
     }
 }
 
 static void store(aes_state_t* state, uint8_t* out) {
-    for(size_t i = 0; i < aes_block_size; i++) {
-        out[i] = state->byte[i];
+    for(size_t i = 0; i < aes_nb; i++) {
+        for(size_t j = 0; j < aes_word_size; j++) {
+            out[i * aes_word_size + j] = state->matrix[j][i];
+        }
     }
 }
 
@@ -272,11 +253,15 @@ void aes_init_key(aes_ctx_t* ctx, const uint8_t* key, aes_type_t type) {
     size_t i = 0;
     for(; i < num_word_key; i++) {
         for(size_t j = 0; j < aes_word_size; j++) {
-            ctx->expand_key.round_key[i / aes_nb].colomn[i % aes_nb].byte[j] = key[i * aes_word_size + j];
+            ctx->expand_key.round_key[i / aes_nb].matrix[j][i % aes_nb] = key[i * aes_word_size + j];
         }
     }
+
     for(; i < num_round * aes_nb; i++) {
-        aes_colomn_t temp = ctx->expand_key.round_key[(i - 1) / aes_nb].colomn[(i - 1) % aes_nb];
+        word_byte temp = {.word = 0};
+        for(size_t j = 0; j < aes_word_size; j++) {
+            temp.byte[j] ^= ctx->expand_key.round_key[(i - 1) / aes_nb].matrix[j][(i - 1) % aes_nb];
+        }
 
         if(i % num_word_key == 0) {
             temp.word = sub_word(rot_word(temp.word)) ^ rcon(i / num_word_key);
@@ -285,7 +270,10 @@ void aes_init_key(aes_ctx_t* ctx, const uint8_t* key, aes_type_t type) {
            (num_word_key > aes_nk_min + aes_nk_step)) {
             temp.word = sub_word(temp.word);
         }
-        ctx->expand_key.round_key[i / aes_nb].colomn[i % aes_nb].word = ctx->expand_key.round_key[(i - num_word_key) / aes_nb].colomn[(i - num_word_key) % aes_nb].word ^ temp.word;
+
+        for(size_t j = 0; j < aes_word_size; j++) {
+            ctx->expand_key.round_key[i / aes_nb].matrix[j][i % aes_nb] = ctx->expand_key.round_key[(i - num_word_key) / aes_nb].matrix[j][(i - num_word_key) % aes_nb] ^ temp.byte[j];
+        }
     }
 }
 

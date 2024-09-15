@@ -36,13 +36,13 @@ enum {
 
 typedef union {
     uint32_t word;
-    uint8_t byte[aes_word_size];
-} aes_colomn_t;
+    uint8_t byte[aes_nb];
+} aes_row_t;
 
 typedef union {
     uint8_t byte[aes_block_size];
-    aes_colomn_t colomn[aes_nb];
-    uint8_t matrix[aes_nb][aes_word_size];
+    aes_row_t row[aes_word_size];
+    uint8_t matrix[aes_word_size][aes_nb];
 } aes_state_t;
 
 typedef struct {
